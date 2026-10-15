@@ -1,156 +1,130 @@
-#include <8051.h>
 
-/*
- * ============================================================
- *        AT89S52 74-SERIES LOGIC IC TESTER
- * ============================================================
- *
- * Supported ICs:
- *
- *   74LS00  NAND
- *   74LS02  NOR
- *   74LS04  NOT
- *   74LS08  AND
- *   74LS32  OR
- *   74LS86  XOR
- *
- *
- * ============================================================
- * LCD CONNECTION
- * ============================================================
- *
- * RS -> P3.0  (pin 10)
- * E  -> P3.1  (pin 11)
- * D4 -> P3.2  (pin 12)
- * D5 -> P3.3  (pin 13)
- * D6 -> P3.4  (pin 14)
- * D7 -> P3.5  (pin 15)
- *
- *
- * ============================================================
- * USER BUTTON
- * ============================================================
- *
- * TEST / NEXT -> P3.6 (pin 16)
- *
- * Assumption:
- *     Button produces HIGH when pressed.
- *
- *
- * ============================================================
- * LED CONNECTION
- * ============================================================
- *
- * GREEN -> P0.0 (pin 39)
- * RED   -> P0.1 (pin 38)
- *
- * LEDs are active LOW:
- *
- *     0 = ON
- *     1 = OFF
- *
- *
- * ============================================================
- * ZIF SOCKET -> AT89S52
- * ============================================================
- *
- * ZIF pin 1  -> P1.0
- * ZIF pin 2  -> P1.1
- * ZIF pin 3  -> P1.2
- * ZIF pin 4  -> P1.3
- * ZIF pin 5  -> P1.4
- * ZIF pin 6  -> P1.5
- *
- * ZIF pin 7  -> GND
- *
- * ZIF pin 8  -> P2.6
- * ZIF pin 9  -> P2.5
- * ZIF pin 10 -> P2.4
- * ZIF pin 11 -> P2.3
- * ZIF pin 12 -> P2.2
- * ZIF pin 13 -> P2.1
- *
- * ZIF pin 14 -> VCC
- *
- *
- * ============================================================
- * IMPORTANT
- * ============================================================
- *
- * P2.0 is NOT used because it is not connected to the ZIF
- * socket according to the supplied hardware mapping.
- *
- * The firmware therefore uses only ZIF pins 1-6 and 8-13.
- */
+#include <REGX51.H>
+#include <intrins.h>
 
 
-/* ============================================================
- * DELAY
- * ============================================================ */
+// PIN DEFINITION 
 
-void delay_ms(unsigned int t)
+sbit LCD_RS = P3^0;
+sbit LCD_EN = P3^1;
+sbit LCD_D4 = P3^2;
+sbit LCD_D5 = P3^3;
+sbit LCD_D6 = P3^4;
+sbit LCD_D7 = P3^5;
+
+sbit TEST_BUTTON   = P3^7;
+
+sbit LED_GREEN = P0^1;
+sbit LED_RED   = P0^0;
+
+sbit ZIF1  = P1^0;
+sbit ZIF2  = P1^1;
+sbit ZIF3  = P1^2;
+sbit ZIF4  = P1^3;
+sbit ZIF5  = P1^4;
+sbit ZIF6  = P1^5;
+
+sbit ZIF8  = P2^6;
+sbit ZIF9  = P2^5;
+sbit ZIF10 = P2^4;
+sbit ZIF11 = P2^3;
+sbit ZIF12 = P2^2;
+sbit ZIF13 = P2^1;
+
+
+// SETTINGS
+
+#define IC_7402 0
+#define IC_7404 1
+#define IC_7400 2
+
+#define DEBOUNCE_MS   30      
+#define LONG_PRESS_MS 1000    
+#define SETTLE_MS     2       
+#define BTN_NONE     0
+#define BTN_PRESSED  1
+#define BTN_RELEASED 2
+
+
+// GLOBALS 
+
+unsigned char selected_ic = IC_7402;
+
+
+// DELAYS 
+
+void delay_ms(unsigned int ms)
 {
-    unsigned int i;
-    unsigned int j;
+    TMOD = (TMOD & 0xF0) | 0x01;
 
-    for (i = 0; i < t; i++)
+    while (ms != 0)
     {
-        for (j = 0; j < 120; j++)
+        TR0 = 0;
+        TH0 = 0xFC;         /* 65536 - 1000 = 0xFC18 */
+        TL0 = 0x18;
+        TF0 = 0;
+        TR0 = 1;
+
+        while (TF0 == 0)
         {
             ;
         }
+
+        TR0 = 0;
+        ms--;
+    }
+}
+
+/* Short wait, at least ~80 us (the LCD needs 37 us per instruction). */
+void lcd_settle(void)
+{
+    unsigned char i;
+
+    for (i = 0; i < 20; i++)
+    {
+        _nop_();
+        _nop_();
     }
 }
 
 
-/* ============================================================
- * LCD FUNCTIONS
- * ============================================================ */
+//LCD FUNCTIONS 
 
 void lcd_pulse(void)
 {
-    P3_1 = 1;
-    delay_ms(1);
-
-    P3_1 = 0;
-    delay_ms(1);
+    LCD_EN = 1;
+    _nop_();
+    _nop_();
+    LCD_EN = 0;
 }
-
 
 void lcd_write_nibble(unsigned char n)
 {
-    P3_2 = (n >> 0) & 1;
-    P3_3 = (n >> 1) & 1;
-    P3_4 = (n >> 2) & 1;
-    P3_5 = (n >> 3) & 1;
+    LCD_D4 = (n & 0x01) ? 1 : 0;
+    LCD_D5 = (n & 0x02) ? 1 : 0;
+    LCD_D6 = (n & 0x04) ? 1 : 0;
+    LCD_D7 = (n & 0x08) ? 1 : 0;
 
     lcd_pulse();
 }
 
-
-void lcd_cmd(unsigned char c)
+void lcd_cmd(unsigned char cmd)
 {
-    P3_0 = 0;
-
-    lcd_write_nibble(c >> 4);
-    lcd_write_nibble(c & 0x0F);
-
-    delay_ms(2);
+    LCD_RS = 0;
+    lcd_write_nibble(cmd >> 4);
+    lcd_write_nibble(cmd & 0x0F);
+    lcd_settle();
 }
 
-
-void lcd_data(unsigned char c)
+void lcd_data(unsigned char value)
 {
-    P3_0 = 1;
-
-    lcd_write_nibble(c >> 4);
-    lcd_write_nibble(c & 0x0F);
-
-    delay_ms(1);
+    LCD_RS = 1;
+    lcd_write_nibble(value >> 4);
+    lcd_write_nibble(value & 0x0F);
+    lcd_settle();
 }
 
-
-void lcd_string(char *s)
+void lcd_string(char code *s)
 {
     while (*s)
     {
@@ -159,846 +133,397 @@ void lcd_string(char *s)
     }
 }
 
+void lcd_clear(void)
+{
+    lcd_cmd(0x01);
+    delay_ms(3);            /* clear needs ~1.5 ms */
+}
+
+void lcd_goto(unsigned char row, unsigned char col)
+{
+    if (row == 0)
+        lcd_cmd(0x80 + col);
+    else
+        lcd_cmd(0xC0 + col);
+}
 
 void lcd_init(void)
 {
-    P3_0 = 0;
-    P3_1 = 0;
+    LCD_RS = 0;
+    LCD_EN = 0;
 
     delay_ms(50);
 
     lcd_write_nibble(0x03);
     delay_ms(5);
-
     lcd_write_nibble(0x03);
-    delay_ms(1);
-
+    delay_ms(2);
     lcd_write_nibble(0x03);
-    delay_ms(1);
+    delay_ms(2);
+    lcd_write_nibble(0x02);     /* switch to 4-bit mode */
+    delay_ms(2);
 
-    lcd_write_nibble(0x02);
-    delay_ms(1);
-
-    lcd_cmd(0x28);      /* 4-bit, 2-line, 5x8 */
-    lcd_cmd(0x0C);      /* Display ON, cursor OFF */
-    lcd_cmd(0x06);      /* Increment cursor */
-    lcd_cmd(0x01);      /* Clear display */
-
-    delay_ms(5);
+    lcd_cmd(0x28);              /* 4-bit, 2 lines, 5x8 font */
+    lcd_cmd(0x0C);              /* display on, cursor off   */
+    lcd_cmd(0x06);              /* cursor increments        */
+    lcd_clear();
 }
 
 
-void lcd_clear(void)
-{
-    lcd_cmd(0x01);
-    delay_ms(5);
-}
-
-
-void lcd_line2(void)
-{
-    lcd_cmd(0xC0);
-}
-
-
-/* ============================================================
- * LED FUNCTIONS
- * ============================================================ */
-
+//LED FUNCTIONS (active LOW)
 void leds_off(void)
 {
-    P0_0 = 1;
-    P0_1 = 1;
+    LED_GREEN = 1;
+    LED_RED   = 1;
 }
-
 
 void green_on(void)
 {
-    P0_0 = 0;
-    P0_1 = 1;
+    LED_RED   = 1;
+    LED_GREEN = 0;
 }
-
 
 void red_on(void)
 {
-    P0_0 = 1;
-    P0_1 = 0;
+    LED_GREEN = 1;
+    LED_RED   = 0;
 }
 
 
-/* ============================================================
- * ZIF PIN FUNCTIONS
- *
- * These convert ZIF socket pin numbers into the corresponding
- * AT89S52 port pins.
- *
- * ZIF:
- *
- * 1-6  -> P1.0-P1.5
- * 8-13 -> P2.6-P2.1
- *
- * ZIF pins 7 and 14 are power and are not controlled here.
- * ============================================================ */
+// ZIF I/O 
 
-
-/* Set a ZIF pin to logic 0 or 1 */
-
-void zif_write(unsigned char pin, unsigned char value)
+/* Writing 1 releases a quasi-bidirectional pin so it can be read. */
+void release_zif_pins(void)
 {
-    switch (pin)
-    {
-        case 1:
-            P1_0 = value;
-            break;
-
-        case 2:
-            P1_1 = value;
-            break;
-
-        case 3:
-            P1_2 = value;
-            break;
-
-        case 4:
-            P1_3 = value;
-            break;
-
-        case 5:
-            P1_4 = value;
-            break;
-
-        case 6:
-            P1_5 = value;
-            break;
-
-        case 8:
-            P2_6 = value;
-            break;
-
-        case 9:
-            P2_5 = value;
-            break;
-
-        case 10:
-            P2_4 = value;
-            break;
-
-        case 11:
-            P2_3 = value;
-            break;
-
-        case 12:
-            P2_2 = value;
-            break;
-
-        case 13:
-            P2_1 = value;
-            break;
-    }
+    P1 = 0xFF;
+    P2 = 0xFF;
 }
 
 
-/* Read a ZIF pin */
+//GATE TEST MACROS 
 
-unsigned char zif_read(unsigned char pin)
+
+#define TEST_NOR(A, B, Y)                           \
+do {                                                \
+    Y = 1;                                          \
+    A = 0; B = 0; delay_ms(SETTLE_MS);              \
+    if (Y != 1) return 0;                           \
+    A = 0; B = 1; delay_ms(SETTLE_MS);              \
+    if (Y != 0) return 0;                           \
+    A = 1; B = 0; delay_ms(SETTLE_MS);              \
+    if (Y != 0) return 0;                           \
+    A = 1; B = 1; delay_ms(SETTLE_MS);              \
+    if (Y != 0) return 0;                           \
+    A = 1; B = 1;                                   \
+} while (0)
+
+#define TEST_NAND(A, B, Y)                          \
+do {                                                \
+    Y = 1;                                          \
+    A = 0; B = 0; delay_ms(SETTLE_MS);              \
+    if (Y != 1) return 0;                           \
+    A = 0; B = 1; delay_ms(SETTLE_MS);              \
+    if (Y != 1) return 0;                           \
+    A = 1; B = 0; delay_ms(SETTLE_MS);              \
+    if (Y != 1) return 0;                           \
+    A = 1; B = 1; delay_ms(SETTLE_MS);              \
+    if (Y != 0) return 0;                           \
+    A = 1; B = 1;                                   \
+} while (0)
+
+#define TEST_INV(A, Y)                              \
+do {                                                \
+    Y = 1;                                          \
+    A = 0; delay_ms(SETTLE_MS);                     \
+    if (Y != 1) return 0;                           \
+    A = 1; delay_ms(SETTLE_MS);                     \
+    if (Y != 0) return 0;                           \
+} while (0)
+
+
+/* ================= 7402 QUAD NOR ================= */
+/* gate1 A=2 B=3 Y=1 | gate2 A=5 B=6 Y=4 | gate3 A=8 B=9 Y=10 | gate4 A=11 B=12 Y=13 */
+
+unsigned char test_7402_gate1(void) { TEST_NOR(ZIF2,  ZIF3,  ZIF1);  return 1; }
+unsigned char test_7402_gate2(void) { TEST_NOR(ZIF5,  ZIF6,  ZIF4);  return 1; }
+unsigned char test_7402_gate3(void) { TEST_NOR(ZIF8,  ZIF9,  ZIF10); return 1; }
+unsigned char test_7402_gate4(void) { TEST_NOR(ZIF11, ZIF12, ZIF13); return 1; }
+
+/* Returns 0 for PASS, otherwise the number of the first failed gate. */
+unsigned char test_7402(void)
 {
-    switch (pin)
-    {
-        case 1:
-            return P1_0;
-
-        case 2:
-            return P1_1;
-
-        case 3:
-            return P1_2;
-
-        case 4:
-            return P1_3;
-
-        case 5:
-            return P1_4;
-
-        case 6:
-            return P1_5;
-
-        case 8:
-            return P2_6;
-
-        case 9:
-            return P2_5;
-
-        case 10:
-            return P2_4;
-
-        case 11:
-            return P2_3;
-
-        case 12:
-            return P2_2;
-
-        case 13:
-            return P2_1;
-    }
-
+    if (!test_7402_gate1()) return 1;
+    if (!test_7402_gate2()) return 2;
+    if (!test_7402_gate3()) return 3;
+    if (!test_7402_gate4()) return 4;
     return 0;
 }
 
 
-/*
- * Release a ZIF pin for reading.
- *
- * 8051 ports are quasi-bidirectional.
- * Writing 1 releases the pin so the external IC can drive it.
- */
+// 7400 QUAD NAND 
+/* gate1 A=1 B=2 Y=3 | gate2 A=4 B=5 Y=6 | gate3 A=9 B=10 Y=8 | gate4 A=12 B=13 Y=11 */
 
-void zif_release(unsigned char pin)
-{
-    zif_write(pin, 1);
-}
-
-
-/* ============================================================
- * TWO-INPUT LOGIC GATE TEST
- *
- * gate:
- *
- *     input A
- *     input B
- *     output Y
- *
- * operation:
- *
- *     0 = AND
- *     1 = OR
- *     2 = NAND
- *     3 = NOR
- *     4 = XOR
- *
- * ============================================================ */
-
-unsigned char test_2input_gate(
-    unsigned char a,
-    unsigned char b,
-    unsigned char y,
-    unsigned char operation)
-{
-    unsigned char expected;
-
-    /*
-     * Release output pin.
-     */
-    zif_release(y);
-
-    /*
-     * Test 00
-     */
-    zif_write(a, 0);
-    zif_write(b, 0);
-    delay_ms(2);
-
-    switch (operation)
-    {
-        case 0:
-            expected = 0;          /* AND */
-            break;
-
-        case 1:
-            expected = 0;          /* OR */
-            break;
-
-        case 2:
-            expected = 1;          /* NAND */
-            break;
-
-        case 3:
-            expected = 1;          /* NOR */
-            break;
-
-        default:
-            expected = 0;          /* XOR */
-            break;
-    }
-
-    if (zif_read(y) != expected)
-        return 0;
-
-
-    /*
-     * Test 01
-     */
-    zif_write(a, 0);
-    zif_write(b, 1);
-    delay_ms(2);
-
-    switch (operation)
-    {
-        case 0:
-            expected = 0;
-            break;
-
-        case 1:
-            expected = 1;
-            break;
-
-        case 2:
-            expected = 1;
-            break;
-
-        case 3:
-            expected = 0;
-            break;
-
-        default:
-            expected = 1;
-            break;
-    }
-
-    if (zif_read(y) != expected)
-        return 0;
-
-
-    /*
-     * Test 10
-     */
-    zif_write(a, 1);
-    zif_write(b, 0);
-    delay_ms(2);
-
-    switch (operation)
-    {
-        case 0:
-            expected = 0;
-            break;
-
-        case 1:
-            expected = 1;
-            break;
-
-        case 2:
-            expected = 1;
-            break;
-
-        case 3:
-            expected = 0;
-            break;
-
-        default:
-            expected = 1;
-            break;
-    }
-
-    if (zif_read(y) != expected)
-        return 0;
-
-
-    /*
-     * Test 11
-     */
-    zif_write(a, 1);
-    zif_write(b, 1);
-    delay_ms(2);
-
-    switch (operation)
-    {
-        case 0:
-            expected = 1;
-            break;
-
-        case 1:
-            expected = 1;
-            break;
-
-        case 2:
-            expected = 0;
-            break;
-
-        case 3:
-            expected = 0;
-            break;
-
-        default:
-            expected = 0;
-            break;
-    }
-
-    if (zif_read(y) != expected)
-        return 0;
-
-
-    return 1;
-}
-
-
-/* ============================================================
- * 74LS00 NAND
- *
- * Standard 7400 pinout:
- *
- * 1,2 -> 3
- * 4,5 -> 6
- * 9,10 -> 8
- * 12,13 -> 11
- * ============================================================ */
+unsigned char test_7400_gate1(void) { TEST_NAND(ZIF1,  ZIF2,  ZIF3);  return 1; }
+unsigned char test_7400_gate2(void) { TEST_NAND(ZIF4,  ZIF5,  ZIF6);  return 1; }
+unsigned char test_7400_gate3(void) { TEST_NAND(ZIF9,  ZIF10, ZIF8);  return 1; }
+unsigned char test_7400_gate4(void) { TEST_NAND(ZIF12, ZIF13, ZIF11); return 1; }
 
 unsigned char test_7400(void)
 {
-    if (!test_2input_gate(1, 2, 3, 2))
-        return 0;
-
-    if (!test_2input_gate(4, 5, 6, 2))
-        return 0;
-
-    if (!test_2input_gate(9, 10, 8, 2))
-        return 0;
-
-    if (!test_2input_gate(12, 13, 11, 2))
-        return 0;
-
-    return 1;
-}
-
-
-/* ============================================================
- * 74LS08 AND
- *
- * 1,2 -> 3
- * 4,5 -> 6
- * 9,10 -> 8
- * 12,13 -> 11
- * ============================================================ */
-
-unsigned char test_7408(void)
-{
-    if (!test_2input_gate(1, 2, 3, 0))
-        return 0;
-
-    if (!test_2input_gate(4, 5, 6, 0))
-        return 0;
-
-    if (!test_2input_gate(9, 10, 8, 0))
-        return 0;
-
-    if (!test_2input_gate(12, 13, 11, 0))
-        return 0;
-
-    return 1;
-}
-
-
-/* ============================================================
- * 74LS32 OR
- *
- * 1,2 -> 3
- * 4,5 -> 6
- * 9,10 -> 8
- * 12,13 -> 11
- * ============================================================ */
-
-unsigned char test_7432(void)
-{
-    if (!test_2input_gate(1, 2, 3, 1))
-        return 0;
-
-    if (!test_2input_gate(4, 5, 6, 1))
-        return 0;
-
-    if (!test_2input_gate(9, 10, 8, 1))
-        return 0;
-
-    if (!test_2input_gate(12, 13, 11, 1))
-        return 0;
-
-    return 1;
-}
-
-
-/* ============================================================
- * 74LS86 XOR
- *
- * 1,2 -> 3
- * 4,5 -> 6
- * 9,10 -> 8
- * 12,13 -> 11
- * ============================================================ */
-
-unsigned char test_7486(void)
-{
-    if (!test_2input_gate(1, 2, 3, 4))
-        return 0;
-
-    if (!test_2input_gate(4, 5, 6, 4))
-        return 0;
-
-    if (!test_2input_gate(9, 10, 8, 4))
-        return 0;
-
-    if (!test_2input_gate(12, 13, 11, 4))
-        return 0;
-
-    return 1;
-}
-
-
-/* ============================================================
- * 74LS02 NOR
- *
- * IMPORTANT:
- *
- * 7402 has a DIFFERENT pin arrangement from 7400/7408/7432/7486.
- *
- * Gate 1:
- *     2,3 -> 1
- *
- * Gate 2:
- *     5,6 -> 4
- *
- * Gate 3:
- *     8,9 -> 10
- *
- * Gate 4:
- *     11,12 -> 13
- * ============================================================ */
-
-unsigned char test_7402(void)
-{
-    if (!test_2input_gate(2, 3, 1, 3))
-        return 0;
-
-    if (!test_2input_gate(5, 6, 4, 3))
-        return 0;
-
-    if (!test_2input_gate(8, 9, 10, 3))
-        return 0;
-
-    if (!test_2input_gate(11, 12, 13, 3))
-        return 0;
-
-    return 1;
-}
-
-
-/* ============================================================
- * 74LS04 NOT
- *
- * Six independent inverters:
- *
- * 1 -> 2
- * 3 -> 4
- * 5 -> 6
- * 9 -> 8
- * 11 -> 10
- * 13 -> 12
- * ============================================================ */
-
-unsigned char test_7404_gate(
-    unsigned char input_pin,
-    unsigned char output_pin)
-{
-    /*
-     * Input = 0
-     * Expected output = 1
-     */
-
-    zif_release(output_pin);
-
-    zif_write(input_pin, 0);
-    delay_ms(2);
-
-    if (zif_read(output_pin) != 1)
-        return 0;
-
-
-    /*
-     * Input = 1
-     * Expected output = 0
-     */
-
-    zif_write(input_pin, 1);
-    delay_ms(2);
-
-    if (zif_read(output_pin) != 0)
-        return 0;
-
-
-    return 1;
-}
-
-
-unsigned char test_7404(void)
-{
-    if (!test_7404_gate(1, 2))
-        return 0;
-
-    if (!test_7404_gate(3, 4))
-        return 0;
-
-    if (!test_7404_gate(5, 6))
-        return 0;
-
-    if (!test_7404_gate(9, 8))
-        return 0;
-
-    if (!test_7404_gate(11, 10))
-        return 0;
-
-    if (!test_7404_gate(13, 12))
-        return 0;
-
-    return 1;
-}
-
-
-/* ============================================================
- * DISPLAY IC NAME
- * ============================================================ */
-
-void display_ic(unsigned char ic)
-{
-    lcd_clear();
-
-    switch (ic)
-    {
-        case 0:
-            lcd_string("74LS00 NAND");
-            break;
-
-        case 1:
-            lcd_string("74LS02 NOR");
-            break;
-
-        case 2:
-            lcd_string("74LS04 NOT");
-            break;
-
-        case 3:
-            lcd_string("74LS08 AND");
-            break;
-
-        case 4:
-            lcd_string("74LS32 OR");
-            break;
-
-        case 5:
-            lcd_string("74LS86 XOR");
-            break;
-    }
-}
-
-
-/* ============================================================
- * TEST SELECTED IC
- * ============================================================ */
-
-unsigned char test_selected_ic(unsigned char ic)
-{
-    switch (ic)
-    {
-        case 0:
-            return test_7400();
-
-        case 1:
-            return test_7402();
-
-        case 2:
-            return test_7404();
-
-        case 3:
-            return test_7408();
-
-        case 4:
-            return test_7432();
-
-        case 5:
-            return test_7486();
-    }
-
+    if (!test_7400_gate1()) return 1;
+    if (!test_7400_gate2()) return 2;
+    if (!test_7400_gate3()) return 3;
+    if (!test_7400_gate4()) return 4;
     return 0;
 }
 
 
-/* ============================================================
- * MAIN
- * ============================================================ */
+// 7404 HEX INVERTER 
+/* 1->2, 3->4, 5->6, 9->8, 11->10, 13->12   (input -> output) */
 
-void main(void)
+unsigned char test_7404_gate1(void) { TEST_INV(ZIF1,  ZIF2);  return 1; }
+unsigned char test_7404_gate2(void) { TEST_INV(ZIF3,  ZIF4);  return 1; }
+unsigned char test_7404_gate3(void) { TEST_INV(ZIF5,  ZIF6);  return 1; }
+unsigned char test_7404_gate4(void) { TEST_INV(ZIF9,  ZIF8);  return 1; }
+unsigned char test_7404_gate5(void) { TEST_INV(ZIF11, ZIF10); return 1; }
+unsigned char test_7404_gate6(void) { TEST_INV(ZIF13, ZIF12); return 1; }
+
+unsigned char test_7404(void)
 {
-    unsigned char selected_ic;
-    unsigned char result;
+    if (!test_7404_gate1()) return 1;
+    if (!test_7404_gate2()) return 2;
+    if (!test_7404_gate3()) return 3;
+    if (!test_7404_gate4()) return 4;
+    if (!test_7404_gate5()) return 5;
+    if (!test_7404_gate6()) return 6;
+    return 0;
+}
 
-    /*
-     * Initial port states.
-     */
 
-    leds_off();
+// USER INTERFACE 
 
-    /*
-     * Button input.
-     */
-    P3_6 = 1;
-
-    /*
-     * Unused P3.7 released.
-     */
-    P3_7 = 1;
-
-    /*
-     * Initialize LCD.
-     */
-    lcd_init();
-
-    /*
-     * Initial screen.
-     */
+void show_selection(void)
+{
     lcd_clear();
-    lcd_string("IC TESTER");
+    lcd_goto(0, 0);
 
-    lcd_line2();
-    lcd_string("74LS00 READY");
+    if (selected_ic == IC_7402)
+        lcd_string("IC: 7402 NOR");
+    else if (selected_ic == IC_7404)
+        lcd_string("IC: 7404 INV");
+    else
+        lcd_string("IC: 7400 NAND");
 
-    /*
-     * Start with 74LS00.
-     */
-    selected_ic = 0;
+    lcd_goto(1, 0);
+    lcd_string("TAP=TEST HOLD=IC");
+}
 
+void show_result(unsigned char failed_gate)
+{
+    lcd_clear();
+    lcd_goto(0, 0);
 
-    while (1)
+    if (failed_gate == 0)
     {
-        /*
-         * Wait for button press.
-         *
-         * This assumes P3.6 becomes HIGH when the
-         * button is pressed.
-         */
+        green_on();
 
-        if (P3_6 == 1)
-        {
-            delay_ms(20);
+        if (selected_ic == IC_7402)
+            lcd_string("7402 PASS");
+        else if (selected_ic == IC_7404)
+            lcd_string("7404 PASS");
+        else
+            lcd_string("7400 PASS");
 
-            if (P3_6 == 1)
-            {
-                /*
-                 * Display selected IC.
-                 */
-                display_ic(selected_ic);
+        lcd_goto(1, 0);
 
-                lcd_line2();
-                lcd_string("TESTING...");
+        if (selected_ic == IC_7404)
+            lcd_string("ALL 6 GATES OK");
+        else
+            lcd_string("ALL 4 GATES OK");
+    }
+    else
+    {
+        red_on();
 
-                leds_off();
+        if (selected_ic == IC_7402)
+            lcd_string("7402 FAIL");
+        else if (selected_ic == IC_7404)
+            lcd_string("7404 FAIL");
+        else
+            lcd_string("7400 FAIL");
 
-                delay_ms(100);
-
-                /*
-                 * Run complete truth-table test.
-                 */
-                result = test_selected_ic(selected_ic);
-
-
-                /*
-                 * Display result.
-                 */
-
-                if (result)
-                {
-                    lcd_clear();
-
-                    switch (selected_ic)
-                    {
-                        case 0:
-                            lcd_string("74LS00 PASS");
-                            break;
-
-                        case 1:
-                            lcd_string("74LS02 PASS");
-                            break;
-
-                        case 2:
-                            lcd_string("74LS04 PASS");
-                            break;
-
-                        case 3:
-                            lcd_string("74LS08 PASS");
-                            break;
-
-                        case 4:
-                            lcd_string("74LS32 PASS");
-                            break;
-
-                        case 5:
-                            lcd_string("74LS86 PASS");
-                            break;
-                    }
-
-                    green_on();
-                }
-                else
-                {
-                    lcd_clear();
-
-                    switch (selected_ic)
-                    {
-                        case 0:
-                            lcd_string("74LS00 FAIL");
-                            break;
-
-                        case 1:
-                            lcd_string("74LS02 FAIL");
-                            break;
-
-                        case 2:
-                            lcd_string("74LS04 FAIL");
-                            break;
-
-                        case 3:
-                            lcd_string("74LS08 FAIL");
-                            break;
-
-                        case 4:
-                            lcd_string("74LS32 FAIL");
-                            break;
-
-                        case 5:
-                            lcd_string("74LS86 FAIL");
-                            break;
-                    }
-
-                    red_on();
-                }
-
-
-                /*
-                 * Move to next IC.
-                 *
-                 * Sequence:
-                 *
-                 * 74LS00
-                 * 74LS02
-                 * 74LS04
-                 * 74LS08
-                 * 74LS32
-                 * 74LS86
-                 * 74LS00 ...
-                 */
-
-                selected_ic++;
-
-                if (selected_ic >= 6)
-                    selected_ic = 0;
-
-
-                /*
-                 * Wait for button release.
-                 */
-
-                while (P3_6 == 1)
-                {
-                    ;
-                }
-
-                delay_ms(50);
-            }
-        }
+        lcd_goto(1, 0);
+        lcd_string("GATE ");
+        lcd_data('0' + failed_gate);
+        lcd_string(" FAILED");
     }
 }
 
+void run_selected_test(void)
+{
+    unsigned char failed_gate;
+
+    leds_off();
+    lcd_clear();
+    release_zif_pins();
+
+    if (selected_ic == IC_7402)
+    {
+        lcd_string("TESTING 7402");
+        delay_ms(100);
+        failed_gate = test_7402();
+    }
+    else if (selected_ic == IC_7404)
+    {
+        lcd_string("TESTING 7404");
+        delay_ms(100);
+        failed_gate = test_7404();
+    }
+    else
+    {
+        lcd_string("TESTING 7400");
+        delay_ms(100);
+        failed_gate = test_7400();
+    }
+
+    release_zif_pins();
+    show_result(failed_gate);
+}
+
+
+// SINGLE-BUTTON PRESS HANDLING 
+typedef struct
+{
+    unsigned char stable;       /* debounced level: 1=released, 0=pressed */
+    unsigned char count;        /* consecutive ms that raw differs from stable */
+    unsigned int  held_ms;      /* debounced press duration in ms */
+    unsigned char armed;        /* set after pin has been seen HIGH */
+    unsigned char press_active; /* true only for a valid press begun after HIGH */
+} BUTTON;
+
+BUTTON main_button;
+
+/*
+ * Do not interpret a pin that is already LOW at startup as a new press.
+ * It must first be released HIGH, then pressed again.
+ */
+void button_init(BUTTON *b, unsigned char raw)
+{
+    b->stable = raw ? 1 : 0;
+    b->count = 0;
+    b->held_ms = 0;
+    b->armed = raw ? 1 : 0;
+    b->press_active = 0;
+}
+
+/* Call every ~1 ms. Reports one event per debounced press/release. */
+unsigned char button_update(BUTTON *b, unsigned char raw)
+{
+    unsigned char event;
+
+    event = BTN_NONE;
+    raw = raw ? 1 : 0;
+
+    if (raw == b->stable)
+    {
+        b->count = 0;
+    }
+    else
+    {
+        b->count++;
+
+        if (b->count >= DEBOUNCE_MS)
+        {
+            b->count = 0;
+            b->stable = raw;
+
+            if (raw == 0)
+            {
+                if (b->armed)
+                {
+                    b->press_active = 1;
+                    b->held_ms = 0;
+                    event = BTN_PRESSED;
+                }
+            }
+            else
+            {
+                /* HIGH: release; arm for the next deliberate press. */
+                if (b->press_active)
+                {
+                    b->press_active = 0;
+                    event = BTN_RELEASED;
+                }
+                b->armed = 1;
+                b->held_ms = 0;
+            }
+        }
+    }
+
+    if (b->press_active && b->stable == 0 && b->held_ms < 0xFFFF)
+        b->held_ms++;
+
+    return event;
+}
+
+/* ================= MAIN ================= */
+
+void main(void)
+{
+    unsigned char event;
+    unsigned char long_action_done;
+
+    leds_off();
+
+    /* P3.7 is the only button used by this firmware. */
+    TEST_BUTTON = 1;            /* release latch to use pin as input */
+
+    release_zif_pins();
+
+    lcd_init();
+    show_selection();           /* starts on 7402 */
+
+    delay_ms(50);               /* let supply and input settle */
+    button_init(&main_button, TEST_BUTTON);
+    long_action_done = 0;
+
+    while (1)
+    {
+        delay_ms(1);
+        event = button_update(&main_button, TEST_BUTTON);
+
+        if (event == BTN_PRESSED)
+        {
+            long_action_done = 0;
+        }
+
+        /*
+         * Long press: advance one IC once while the button is held.
+         * Releasing afterwards will NOT run a test for this same press.
+         */
+        if (main_button.press_active &&
+            !long_action_done &&
+            main_button.held_ms >= LONG_PRESS_MS)
+        {
+            selected_ic++;
+            if (selected_ic > IC_7400)
+                selected_ic = IC_7402;
+
+            long_action_done = 1;
+            leds_off();
+            show_selection();
+        }
+
+        /*
+         * Short press: test only when the button is released, so the
+         * firmware can distinguish a tap from a long hold.
+         */
+        if (event == BTN_RELEASED)
+        {
+            if (!long_action_done)
+                run_selected_test();
+
+            long_action_done = 0;
+        }
+    }
+}
