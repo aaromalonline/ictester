@@ -105,6 +105,17 @@ For each LED:
 * ZIF pin 13 → AT89S52 pin 22 (P2.1)
 * ZIF pin 14 → +5V
 
+
+## System Design
+
+<p align="center">
+  <img src="public/block_diagram.png" alt="Block Diagram" width="65%">
+</p>
+
+<p align="center">
+  <img src="public/flowchart.png" alt="Flowchart" width="65%">
+</p>
+
 ## Programming 8051
 
 #### Requirements
@@ -150,4 +161,18 @@ python3 flash.py ./build/firmware_allics.hex
 - Red LED — FAIL
 
 **Safety:** Switch off the tester before inserting or removing an IC from the ZIF socket.
+
+## Output & Demo
+
+<p align="center">
+  <img src="public/imgs/1.jpeg" alt="Project Image 1" width="65%">
+</p>
+
+<p align="center">
+  <img src="public/imgs/2.jpeg" alt="Project Image 2" width="65%">
+</p>
+
+<p align="center">
+  <img src="public/imgs/3.jpeg" alt="Project Image 3" width="65%">
+</p>
 
